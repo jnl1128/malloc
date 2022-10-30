@@ -22,9 +22,6 @@
             "type": "shell",
             "command": "/usr/bin/make",
             "args": [
-                "-C",
-                "${fileDirname}",
-                "test"
             ],
             "problemMatcher": ["$gcc"],
             "group": "build"
