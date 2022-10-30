@@ -122,10 +122,6 @@ static void *extend_heap(size_t words){
 }
 
 /*
-
-
-
-
  * mm_init - initialize the malloc package.
  */
 int mm_init(void)
@@ -145,7 +141,9 @@ int mm_init(void)
     return 0;
 }
 
-//first_fit: 40+ 40 = 80
+//first_fit: 40+ 40 = 80(implicit - short1)
+//first_fit: 24 + 40 = 64(explicit_LIFO - short1)
+//first_fit: 54 + 40 = 94(explicit_LIFO - short2)
 static void *first_fit(size_t size){
     void *bp;
     for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp= NEXT_BLKP(bp)){
@@ -236,9 +234,20 @@ void mm_free(void *ptr)
 {
     size_t size = GET_SIZE(HDRP(ptr));
 
-    PUT(HDRP(ptr), PACK(size, 0));
-    PUT(FTRP(ptr), PACK(size, 0));
-    coalesce(ptr);
+    // PUT(HDRP(ptr), PACK(size, 0));
+    // PUT(FTRP(ptr), PACK(size, 0));
+
+    void *bp = heap_listp + WSIZE;
+    size_t tmp_size = GET_SIZE(HDRP(bp));
+    int flag = GET_ALLOC(bp);
+
+    PUT(HDRP(bp), PACK(size, 0));
+    PUT(FTRP(bp), PACK(size, 0));
+
+    PUT(HDRP(ptr), PACK(tmp_size, flag));
+    PUT(FTRP(ptr), PACK(tmp_size, flag));
+
+    coalesce(bp);
 }
 
 /*
