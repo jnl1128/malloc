@@ -151,6 +151,25 @@ static void *first_fit(size_t size){
             return bp;
         }
     }
+    
+    /* explicit_first_fit(sorted by address)*/
+    // char flag = 0;
+    // for (bp = heap_listp; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+    // {
+    //     if(!GET_ALLOC(HDRP(bp))){
+    //         flag = 1;
+    //         break;
+    //     }
+    // }
+    // if (flag){
+    //     for (bp; GET_SIZE(bp + DSIZE) > 0; bp = (bp+WSIZE)){
+    //         if (size <= GET_SIZE(HDRP(bp)))
+    //         {
+    //             return bp;
+    //         }
+    //     }
+    // }
+    
     return NULL;
 }
 
@@ -234,20 +253,44 @@ void mm_free(void *ptr)
 {
     size_t size = GET_SIZE(HDRP(ptr));
 
-    // PUT(HDRP(ptr), PACK(size, 0));
-    // PUT(FTRP(ptr), PACK(size, 0));
+    /* implicit_first_fit */
+    PUT(HDRP(ptr), PACK(size, 0));
+    PUT(FTRP(ptr), PACK(size, 0));
+    coalesce(ptr);
 
-    void *bp = heap_listp + WSIZE;
-    size_t tmp_size = GET_SIZE(HDRP(bp));
-    int flag = GET_ALLOC(bp);
+    /* explicit_first_fit (LIFO)*/
+    // void *bp = heap_listp + WSIZE;
+    // size_t tmp_size = GET_SIZE(HDRP(bp));
+    // int flag = GET_ALLOC(bp);
+    // PUT(HDRP(bp), PACK(size, 0));
+    // PUT(FTRP(bp), PACK(size, 0));
+    // PUT(HDRP(ptr), PACK(tmp_size, flag));
+    // PUT(FTRP(ptr), PACK(tmp_size, flag));
+    //coalesce(bp);
 
-    PUT(HDRP(bp), PACK(size, 0));
-    PUT(FTRP(bp), PACK(size, 0));
+    /* explicit_first_fit (sorted by address) */
+    // char flag = 0;
+    // void *predecessor;
+    // for (predecessor = ptr; predecessor > heap_listp; predecessor = PREV_BLKP(predecessor))
+    // {
+    //     if (!GET_ALLOC(HDRP(predecessor)))
+    //     {
+    //         size_t pre_size = GET_SIZE(predecessor);
+    //         PUT(HDRP(ptr), PACK(size, 0));
+    //         PUT(FTRP(ptr), PACK(size, 0));
+    //         PUT(ptr+WSIZE, PACK(pre_size, 0));
+    //         PUT(ptr + DSIZE, PACK(0, 0));
 
-    PUT(HDRP(ptr), PACK(tmp_size, flag));
-    PUT(FTRP(ptr), PACK(tmp_size, flag));
-
-    coalesce(bp);
+    //         PUT(predecessor + DSIZE, PACK(size, 0));
+    //         flag = 1;
+    //         break;
+    //     }
+    // }
+    // if (!flag){
+    //     PUT(HDRP(ptr), PACK(size, 0));
+    //     PUT(FTRP(ptr), PACK(size, 0));
+    // }
+    // coalesce(ptr);
 }
 
 /*
@@ -262,24 +305,11 @@ void *mm_realloc(void *ptr, size_t size)
     newptr = mm_malloc(size);
     if (newptr == NULL)
       return NULL;
-    copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
+    // copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
+    copySize = GET_SIZE(HDRP(oldptr));
     if (size < copySize)
-      copySize = size;
+        copySize = size;
     memcpy(newptr, oldptr, copySize);
     mm_free(oldptr);
     return newptr;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
