@@ -95,7 +95,7 @@ void put_free_block(void *bp);
 
 static void *coalesce(void *bp)
 {
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))); // binary로 하면 segmentfault남 
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
 
@@ -236,10 +236,41 @@ void *mm_malloc(size_t size)
 }
 
 void put_free_block(void *bp){
-    SUCP(bp) = free_listp;
-    PREP(bp) = NULL;
-    PREP(free_listp) = bp;
-    free_listp = bp;
+    /* LIFO: 42 + 40 = 82 */
+    // SUCP(bp) = free_listp;
+    // PREP(bp) = NULL;
+    // PREP(free_listp) = bp;
+    // free_listp = bp;
+
+    /* SORTED BY ADDRESS: 44 + 12 = 56 */
+    void *ptr;
+    for (ptr = free_listp; GET_ALLOC(HDRP(ptr)) != 1; ptr = SUCP(ptr)){
+        if (bp < ptr){
+            if (ptr == free_listp){
+                SUCP(bp) = ptr;
+                PREP(bp) = PREP(ptr);
+                PREP(ptr) = bp;
+                free_listp = bp;
+            }else{
+                SUCP(PREP(ptr)) = bp;
+                SUCP(bp) = ptr;
+                PREP(bp) = PREP(ptr);
+                PREP(ptr) = bp;
+            }
+            return;
+        }
+    }
+    if (ptr == free_listp){
+        SUCP(bp) = free_listp;
+        PREP(bp) = NULL;
+        PREP(free_listp) = bp;
+        free_listp = bp;
+    }else{
+        SUCP(PREP(ptr)) = bp;
+        SUCP(bp) = ptr;
+        PREP(bp) = PREP(ptr);
+        PREP(ptr) = bp;
+    }
 }
 
 void remove_free_block(void *bp){
