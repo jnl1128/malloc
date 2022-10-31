@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${fileDirname}/${fileBasenameNoExtension}",
-            "args": ["-a", "-V", "-f", "traces/realloc-bal.rep"],
+            "args": ["-a", "-V", "-f", "traces/binary-bal.rep"],
             "stopAtEntry":false,
             "cwd": "${fileDirname}",
             "environment":[],

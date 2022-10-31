@@ -2,14 +2,19 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#define PUT(p, val) (*(int *)(p) = (val))
 
 int main(void){
-    int b = 12;
-    int c = 10;
-    int *a;
-    PUT(a, 0);
-    PUT(a, b);
-    printf("%d\n", *a);
-    return 0;
+    // int num = 10;
+    // int nnum = 11;
+    // int *single = &num;
+    // int **ddouble = &single;
+    // printf("%d %d\n", *single, **ddouble);
+    // *(int **)single = &nnum;
+    // printf("%d %d\n", *single, &nnum);
+    // printf("%d\n", *single);
+    int i;
+    for (i = 0; i != 0; i++){
+        printf("hi\n");
+    }
+    printf("%d\n", i);
 }
