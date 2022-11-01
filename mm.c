@@ -93,60 +93,6 @@ void *mm_realloc(void *ptr, size_t size);
 void remove_free_block(void *bp);
 void put_free_block(void *bp);
 
-static void *coalesce(void *bp)
-{
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))); // binary로 하면 segmentfault남 
-    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
-    size_t size = GET_SIZE(HDRP(bp));
-
-    // CASE 1: both prev and next are allocated
-    if(prev_alloc && next_alloc){
-        put_free_block(bp);
-        return bp;
-    }else if(prev_alloc && !next_alloc){
-        // CASE 2: prev is allocatd, next is freed
-        remove_free_block(NEXT_BLKP(bp));
-        size += GET_SIZE(HDRP(NEXT_BLKP(bp))); // new size = cur_block size + next_block size
-        PUT(HDRP(bp), PACK(size, 0)); // write new size to cur_block header
-        PUT(FTRP(bp), PACK(size, 0)); // copy it to the footer also.
-    }else if(!prev_alloc && next_alloc){
-        // CASE 3: prev is freed, next is allocated
-        remove_free_block(PREV_BLKP(bp));
-        size += GET_SIZE(HDRP(PREV_BLKP(bp))); // new size = cur_block size + prev_block size
-        PUT(FTRP(bp), PACK(size, 0)); // write new size to cur_block footer
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0)); // write new size to prev_block header
-        bp = PREV_BLKP(bp); //bp is changed
-    }else{
-        // CASE 4: both prev and next are freed
-        remove_free_block(PREV_BLKP(bp));
-        remove_free_block(NEXT_BLKP(bp));
-        size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp))); // newsize = cur_block size + prev_block size + next_block size
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0)); // write new_size to prev_block header
-        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0)); //write new_size to next_block footer
-        bp = PREV_BLKP(bp); // bp is changed
-    }
-    put_free_block(bp);
-    return bp;
-}
-
-static void *extend_heap(size_t words){
-    char *bp;
-    size_t size;
-
-    /* Allocate an even number of words to maintain alignment e*/
-    size = (words % 2) ? (words + 1) * WSIZE : (words)*WSIZE;
-    if((long) (bp = mem_sbrk(size)) == -1)
-        return NULL;
-    
-    /* Initialized free block head, footer and the epilogue header */
-    PUT(HDRP(bp), PACK(size, 0));
-    PUT(FTRP(bp), PACK(size, 0));
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* epilogue header */
-
-    /* Coalesce if the previous block was free */
-    return coalesce(bp);
-}
-
 /*
  * mm_init - initialize the malloc package.
  */
@@ -170,15 +116,37 @@ int mm_init(void)
     return 0;
 }
 
+static void *extend_heap(size_t words){
+    char *bp;
+    size_t size;
+
+    /* Allocate an even number of words to maintain alignment e*/
+    size = (words % 2) ? (words + 1) * WSIZE : (words)*WSIZE;
+    if((long) (bp = mem_sbrk(size)) == -1)
+        return NULL;
+    
+    /* Initialized free block head, footer and the epilogue header */
+    PUT(HDRP(bp), PACK(size, 0));
+    PUT(FTRP(bp), PACK(size, 0));
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1)); /* epilogue header */
+
+    /* Coalesce if the previous block was free */
+    return coalesce(bp);
+}
+
 static void *first_fit(size_t size){
     void *bp; 
+    /* IMPLICIT */
     // for (bp = free_listp; GET_SIZE(HDRP(bp)) > 0; bp= NEXT_BLKP(bp)){
     //     if (!GET_ALLOC(HDRP(bp))&& (size <= GET_SIZE(HDRP(bp)))){
     //         return bp;
     //     }
     // }
-    for (bp = free_listp; GET_ALLOC(HDRP(bp)) != 1; bp = SUCP(bp)){
-        if (size <= GET_SIZE(HDRP(bp))){
+    /* LIFO & SBA */
+    for (bp = free_listp; GET_ALLOC(HDRP(bp)) != 1; bp = SUCP(bp))
+    {
+        if (size <= GET_SIZE(HDRP(bp)))
+        {
             return bp;
         }
     }
@@ -188,10 +156,6 @@ static void *first_fit(size_t size){
 static void place(void *bp, size_t asize){
     size_t csize = GET_SIZE(HDRP(bp));
     remove_free_block(bp);
-    // 분할을 할것인가
-    // 근데 왜 2*DSIZE일까?
-    // 내 추측: 하나의 블록이 최소 차지할 공간이 2*DSIZE일 거 같다.
-    // 왜냐하면 footer(4) + header(4) + alignment를 위한 (8)?
     if ((csize - asize) >= (2*DSIZE)){ 
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
@@ -202,7 +166,6 @@ static void place(void *bp, size_t asize){
     }
     else
     {
-        // 분할을 하지 않을 것인가
         PUT(HDRP(bp), PACK(csize, 1));
         PUT(FTRP(bp), PACK(csize, 1));
     }
@@ -242,35 +205,29 @@ void put_free_block(void *bp){
     // PREP(free_listp) = bp;
     // free_listp = bp;
 
-    /* SORTED BY ADDRESS: 44 + 12 = 56 */
+    /* SBA: 44 + 12 = 56 */
     void *ptr;
     for (ptr = free_listp; GET_ALLOC(HDRP(ptr)) != 1; ptr = SUCP(ptr)){
         if (bp < ptr){
             if (ptr == free_listp){
-                SUCP(bp) = ptr;
-                PREP(bp) = PREP(ptr);
-                PREP(ptr) = bp;
                 free_listp = bp;
             }else{
                 SUCP(PREP(ptr)) = bp;
-                SUCP(bp) = ptr;
-                PREP(bp) = PREP(ptr);
-                PREP(ptr) = bp;
             }
+            SUCP(bp) = ptr;
+            PREP(bp) = PREP(ptr);
+            PREP(ptr) = bp;
             return;
         }
     }
     if (ptr == free_listp){
-        SUCP(bp) = free_listp;
-        PREP(bp) = NULL;
-        PREP(free_listp) = bp;
         free_listp = bp;
     }else{
         SUCP(PREP(ptr)) = bp;
-        SUCP(bp) = ptr;
-        PREP(bp) = PREP(ptr);
-        PREP(ptr) = bp;
     }
+    SUCP(bp) = ptr;
+    PREP(bp) = PREP(ptr);
+    PREP(ptr) = bp;
 }
 
 void remove_free_block(void *bp){
@@ -290,15 +247,51 @@ void mm_free(void *ptr)
 {
     size_t size = GET_SIZE(HDRP(ptr));
 
-    /* implicit_first_fit */
+    /* IMPLICIT */
     // PUT(HDRP(ptr), PACK(size, 0));
     // PUT(FTRP(ptr), PACK(size, 0));
     // coalesce(ptr);
 
-    /* explicit_first_fit (LIFO)*/
+    /* LIFO & SBA */
     PUT(HDRP(ptr), PACK(size, 0));
     PUT(FTRP(ptr), PACK(size, 0));
     coalesce(ptr);
+}
+
+static void *coalesce(void *bp)
+{
+    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))); // binary로 하면 segmentfault남 
+    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
+    size_t size = GET_SIZE(HDRP(bp));
+
+    // CASE 1: both prev and next are allocated
+    if(prev_alloc && next_alloc){
+        put_free_block(bp);
+        return bp;
+    }else if(prev_alloc && !next_alloc){
+        // CASE 2: prev is allocatd, next is freed
+        remove_free_block(NEXT_BLKP(bp));
+        size += GET_SIZE(HDRP(NEXT_BLKP(bp))); // new size = cur_block size + next_block size
+        PUT(HDRP(bp), PACK(size, 0)); // write new size to cur_block header
+        PUT(FTRP(bp), PACK(size, 0)); // copy it to the footer also.
+    }else if(!prev_alloc && next_alloc){
+        // CASE 3: prev is freed, next is allocated
+        remove_free_block(PREV_BLKP(bp));
+        size += GET_SIZE(HDRP(PREV_BLKP(bp))); // new size = cur_block size + prev_block size
+        PUT(FTRP(bp), PACK(size, 0)); // write new size to cur_block footer
+        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0)); // write new size to prev_block header
+        bp = PREV_BLKP(bp); //bp is changed
+    }else{
+        // CASE 4: both prev and next are freed
+        remove_free_block(PREV_BLKP(bp));
+        remove_free_block(NEXT_BLKP(bp));
+        size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp))); // newsize = cur_block size + prev_block size + next_block size
+        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0)); // write new_size to prev_block header
+        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0)); //write new_size to next_block footer
+        bp = PREV_BLKP(bp); // bp is changed
+    }
+    put_free_block(bp);
+    return bp;
 }
 
 /*
