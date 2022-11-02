@@ -76,12 +76,15 @@ team_t team = {
 #define PREP(bp) (*(void**)(bp))
 #define SUCP(bp) (*(void**)(bp+WSIZE))
 
+#define SEGP(ptr, list) (*(void**)(ptr+(list*WSIZE)))
+
 #define LISTLIMIT 20
 
 /* Global variables */
 static void* heap_listp;
 static void* free_listp;
-static void *segregation_list[LISTLIMIT];
+static void* segre_listp;
+// static void *segregation_list[LISTLIMIT];
 
 /* Function prototype */
 int mm_init(void);
@@ -101,28 +104,17 @@ void put_free_block(void *bp, size_t size);
  */
 int mm_init(void)
 {
-    int i;
-    for (i = 0; i < LISTLIMIT; i++){
-        segregation_list[i] = NULL;
-    }
-
-    // if ((heap_listp = mem_sbrk(6 * WSIZE)) == (void *)-1)
-    //     return -1;
-
-    if ((heap_listp = mem_sbrk(4 * WSIZE)) == (void *)-1)
+    if ((heap_listp = mem_sbrk(24 * WSIZE)) == (void *)-1)
         return -1;
     PUT(heap_listp, 0);
-    PUT(heap_listp + (1 * WSIZE), PACK(DSIZE, 1));
-    PUT(heap_listp + (2 * WSIZE), PACK(DSIZE, 1));
-    PUT(heap_listp + (3 * WSIZE), PACK(0, 1));
-    heap_listp += (2 * WSIZE);
-    // PUT(heap_listp + (1 * WSIZE), PACK(2*DSIZE, 1)); //prologue header
-    // PUT(heap_listp + (2 * WSIZE), NULL); // prologue predecessor
-    // PUT(heap_listp + (3 * WSIZE), NULL); // prologue successor
-    // PUT(heap_listp + (4 * WSIZE), PACK(2*DSIZE, 1)); // prologue footer
-    // PUT(heap_listp + (5 * WSIZE), PACK(0, 1));
-    // heap_listp += (2 * DSIZE);
-    // free_listp = heap_listp - DSIZE;
+    PUT(heap_listp + (1 * WSIZE), PACK(22*WSIZE, 1));
+    segre_listp = heap_listp + (2 * WSIZE);
+    for (int list = 0; list < LISTLIMIT; list++){
+        SEGP(segre_listp, list) = NULL;
+    }
+    PUT(heap_listp + (22 * WSIZE), PACK(22*WSIZE, 1));
+    PUT(heap_listp + (23 * WSIZE), PACK(0, 1));
+    heap_listp += (22 * WSIZE);
 
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
     // for making a free block
@@ -169,18 +161,19 @@ static void *first_fit(size_t size){
 
     int list = 0;
     size_t searchsize = size;
-
-    while (list < LISTLIMIT){
-        if ((list == LISTLIMIT - 1) || (searchsize <= 1) && (segregation_list[list] != NULL)){
-            bp = segregation_list[list];
-            while((bp != NULL) && (size > GET_SIZE(HDRP(bp)))){
+    while(list < LISTLIMIT){
+        if ((list == LISTLIMIT - 1) || (searchsize <= 1)&&SEGP(segre_listp, list) != NULL){
+            bp = SEGP(segre_listp, list);
+            while((bp != NULL) && (size>GET_SIZE(HDRP(bp)))){
                 bp = SUCP(bp);
             }
-            if (bp != NULL) return bp;
+            if (bp != NULL)
+                return bp;
         }
         searchsize >>= 1;
         list++;
     }
+
     return NULL;
 }
 
@@ -268,9 +261,9 @@ void put_free_block(void *bp, size_t size){
         size >>= 1;
         list++;
     }
-    search_ptr = segregation_list[list];
-
-    while((search_ptr != NULL) && size > GET_SIZE(HDRP(search_ptr))){
+    search_ptr = SEGP(segre_listp, list);
+    while ((search_ptr != NULL) && size > GET_SIZE(HDRP(search_ptr)))
+    {
         insert_ptr = search_ptr;
         search_ptr = SUCP(search_ptr);
     }
@@ -284,7 +277,7 @@ void put_free_block(void *bp, size_t size){
             SUCP(bp) = search_ptr;
             PREP(bp) = NULL;
             PREP(search_ptr) = bp;
-            segregation_list[list] = bp;
+            SEGP(segre_listp, list) = bp;
         }
     }else{
         if(insert_ptr != NULL){
@@ -294,13 +287,14 @@ void put_free_block(void *bp, size_t size){
         }else{
             SUCP(bp) = NULL;
             PREP(bp) = NULL;
-            segregation_list[list] = bp;
+            SEGP(segre_listp, list) = bp;
         }
     }
     return;
 }
 
 void remove_free_block(void *bp){
+    /*IMPLICIT & EXPLICIT*/
     // if (bp == free_listp){
     //     PREP(SUCP(bp)) = NULL;
     //     free_listp = SUCP(bp);
@@ -323,13 +317,13 @@ void remove_free_block(void *bp){
             SUCP(PREP(bp)) = SUCP(bp);
         }else{
             PREP(SUCP(bp)) = NULL;
-            segregation_list[list] = SUCP(bp);
+            SEGP(segre_listp, list) = SUCP(bp);
         }
     }else{
         if(PREP(bp) != NULL){
             SUCP(PREP(bp)) = NULL;
         }else{
-            segregation_list[list] = NULL;
+            SEGP(segre_listp, list) = NULL;
         }
     }
     return;
@@ -355,7 +349,7 @@ void mm_free(void *ptr)
 
 static void *coalesce(void *bp)
 {
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp))); // binary로 하면 segmentfault남 
+    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
 
