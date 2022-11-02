@@ -188,10 +188,6 @@ static void *first_fit(size_t size){
 static void place(void *bp, size_t asize){
     size_t csize = GET_SIZE(HDRP(bp));
     remove_free_block(bp);
-    // 분할을 할것인가
-    // 근데 왜 2*DSIZE일까?
-    // 내 추측: 하나의 블록이 최소 차지할 공간이 2*DSIZE일 거 같다.
-    // 왜냐하면 footer(4) + header(4) + alignment를 위한 (8)?
     if ((csize - asize) >= (2*DSIZE)){ 
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
@@ -202,7 +198,6 @@ static void place(void *bp, size_t asize){
     }
     else
     {
-        // 분할을 하지 않을 것인가
         PUT(HDRP(bp), PACK(csize, 1));
         PUT(FTRP(bp), PACK(csize, 1));
     }
