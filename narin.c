@@ -17,4 +17,11 @@ int main(void){
         printf("hi\n");
     }
     printf("%d\n", i);
+    float a = 4/2.0;
+    int b = 4 / 2;
+    if (a == b){
+        printf("haha!\n");
+    }else{
+        printf("TT");
+    }
 }
