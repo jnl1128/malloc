@@ -44,6 +44,8 @@ team_t team = {
 
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
+
+/* narin define */
 /* Basic constant and macros*/
 #define WSIZE 4
 #define DSIZE 8
@@ -74,15 +76,9 @@ team_t team = {
 #define PREP(bp) (*(void**)(bp))
 #define SUCP(bp) (*(void**)(bp+WSIZE))
 
-#define SEGP(ptr, list) (*(void**)(ptr+(list*WSIZE)))
-
-#define LISTLIMIT 20
-
 /* Global variables */
 static void* heap_listp;
 static void* free_listp;
-static void* segre_listp;
-// static void *segregation_list[LISTLIMIT];
 
 /* Function prototype */
 int mm_init(void);
@@ -95,30 +91,42 @@ void *mm_malloc(size_t size);
 void mm_free(void *ptr);
 void *mm_realloc(void *ptr, size_t size);
 void remove_free_block(void *bp);
-void put_free_block(void *bp, size_t size);
+void put_free_block(void *bp);
 
-/*
- * mm_init - initialize the malloc package.
- */
-int mm_init(void)
+static void *coalesce(void *bp)
 {
-    if ((heap_listp = mem_sbrk(24 * WSIZE)) == (void *)-1)
-        return -1;
-    PUT(heap_listp, 0);
-    PUT(heap_listp + (1 * WSIZE), PACK(22*WSIZE, 1));
-    segre_listp = heap_listp + (2 * WSIZE);
-    for (int list = 0; list < LISTLIMIT; list++){
-        SEGP(segre_listp, list) = NULL;
-    }
-    PUT(heap_listp + (22 * WSIZE), PACK(22*WSIZE, 1));
-    PUT(heap_listp + (23 * WSIZE), PACK(0, 1));
-    heap_listp += (22 * WSIZE);
+    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
+    size_t size = GET_SIZE(HDRP(bp));
 
-    /* Extend the empty heap with a free block of CHUNKSIZE bytes */
-    // for making a free block
-    if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
-        return -1;
-    return 0;
+    // CASE 1: both prev and next are allocated
+    if(prev_alloc && next_alloc){
+        put_free_block(bp);
+        return bp;
+    }else if(prev_alloc && !next_alloc){
+        // CASE 2: prev is allocatd, next is freed
+        remove_free_block(NEXT_BLKP(bp));
+        size += GET_SIZE(HDRP(NEXT_BLKP(bp))); // new size = cur_block size + next_block size
+        PUT(HDRP(bp), PACK(size, 0)); // write new size to cur_block header
+        PUT(FTRP(bp), PACK(size, 0)); // copy it to the footer also.
+    }else if(!prev_alloc && next_alloc){
+        // CASE 3: prev is freed, next is allocated
+        remove_free_block(PREV_BLKP(bp));
+        size += GET_SIZE(HDRP(PREV_BLKP(bp))); // new size = cur_block size + prev_block size
+        PUT(FTRP(bp), PACK(size, 0)); // write new size to cur_block footer
+        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0)); // write new size to prev_block header
+        bp = PREV_BLKP(bp); //bp is changed
+    }else{
+        // CASE 4: both prev and next are freed
+        remove_free_block(PREV_BLKP(bp));
+        remove_free_block(NEXT_BLKP(bp));
+        size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp))); // newsize = cur_block size + prev_block size + next_block size
+        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0)); // write new_size to prev_block header
+        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0)); //write new_size to next_block footer
+        bp = PREV_BLKP(bp); // bp is changed
+    }
+    put_free_block(bp);
+    return bp;
 }
 
 static void *extend_heap(size_t words){
@@ -139,39 +147,41 @@ static void *extend_heap(size_t words){
     return coalesce(bp);
 }
 
+/*
+ * mm_init - initialize the malloc package.
+ */
+int mm_init(void)
+{
+    if ((heap_listp = mem_sbrk(6*WSIZE)) == (void *)-1)
+        return -1;
+    PUT(heap_listp, 0);
+    PUT(heap_listp + (1 * WSIZE), PACK(2*DSIZE, 1)); //prologue header
+    PUT(heap_listp + (2 * WSIZE), NULL); // prologue predecessor
+    PUT(heap_listp + (3 * WSIZE), NULL); // prologue successor
+    PUT(heap_listp + (4 * WSIZE), PACK(2*DSIZE, 1)); // prologue footer
+    PUT(heap_listp + (5 * WSIZE), PACK(0, 1));
+    heap_listp += (2 * DSIZE);
+    free_listp = heap_listp - DSIZE;
+
+    /* Extend the empty heap with a free block of CHUNKSIZE bytes */
+    // for making a free block
+    if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
+        return -1;
+    return 0;
+}
+
 static void *first_fit(size_t size){
     void *bp; 
-    /* IMPLICIT */
     // for (bp = free_listp; GET_SIZE(HDRP(bp)) > 0; bp= NEXT_BLKP(bp)){
     //     if (!GET_ALLOC(HDRP(bp))&& (size <= GET_SIZE(HDRP(bp)))){
     //         return bp;
     //     }
     // }
-    /* LIFO & SBA */
-    // for (bp = free_listp; GET_ALLOC(HDRP(bp)) != 1; bp = SUCP(bp))
-    // {
-    //     if (size <= GET_SIZE(HDRP(bp)))
-    //     {
-    //         return bp;
-    //     }
-    // }
-    // return NULL;
-
-    int list = 0;
-    size_t searchsize = size;
-    while(list < LISTLIMIT){
-        if ((list == LISTLIMIT - 1) || (searchsize <= 1)&&SEGP(segre_listp, list) != NULL){
-            bp = SEGP(segre_listp, list);
-            while((bp != NULL) && (size>GET_SIZE(HDRP(bp)))){
-                bp = SUCP(bp);
-            }
-            if (bp != NULL)
-                return bp;
+    for (bp = free_listp; GET_ALLOC(HDRP(bp)) != 1; bp = SUCP(bp)){
+        if (size <= GET_SIZE(HDRP(bp))){
+            return bp;
         }
-        searchsize >>= 1;
-        list++;
     }
-
     return NULL;
 }
 
@@ -184,7 +194,7 @@ static void place(void *bp, size_t asize){
         bp = NEXT_BLKP(bp);
         PUT(HDRP(bp), PACK(csize - asize, 0));
         PUT(FTRP(bp), PACK(csize - asize, 0));
-        put_free_block(bp, csize - asize);
+        put_free_block(bp);
     }
     else
     {
@@ -220,111 +230,21 @@ void *mm_malloc(size_t size)
     return bp;
 }
 
-void put_free_block(void *bp, size_t size){
-    /* LIFO: 42 + 40 = 82 */
-    // SUCP(bp) = free_listp;
-    // PREP(bp) = NULL;
-    // PREP(free_listp) = bp;
-    // free_listp = bp;
-
-    /* SBA: 44 + 12 = 56 */
-    // void *ptr;
-    // for (ptr = free_listp; GET_ALLOC(HDRP(ptr)) != 1; ptr = SUCP(ptr)){
-    //     if (bp < ptr){
-    //         if (ptr == free_listp){
-    //             free_listp = bp;
-    //         }else{
-    //             SUCP(PREP(ptr)) = bp;
-    //         }
-    //         SUCP(bp) = ptr;
-    //         PREP(bp) = PREP(ptr);
-    //         PREP(ptr) = bp;
-    //         return;
-    //     }
-    // }
-    // if (ptr == free_listp){
-    //     free_listp = bp;
-    // }else{
-    //     SUCP(PREP(ptr)) = bp;
-    // }
-    // SUCP(bp) = ptr;
-    // PREP(bp) = PREP(ptr);
-    // PREP(ptr) = bp;
-
-    int list = 0;
-    void *search_ptr;
-    void *insert_ptr = NULL;
-
-    while((list < LISTLIMIT-1) && (size >1)){
-        size >>= 1;
-        list++;
-    }
-    search_ptr = SEGP(segre_listp, list);
-    while ((search_ptr != NULL) && size > GET_SIZE(HDRP(search_ptr)))
-    {
-        insert_ptr = search_ptr;
-        search_ptr = SUCP(search_ptr);
-    }
-    if (search_ptr != NULL){
-        if(insert_ptr != NULL){
-            SUCP(bp) = search_ptr;
-            PREP(bp) = insert_ptr;
-            PREP(search_ptr) = bp;
-            SUCP(insert_ptr) = bp;
-        }else{
-            SUCP(bp) = search_ptr;
-            PREP(bp) = NULL;
-            PREP(search_ptr) = bp;
-            SEGP(segre_listp, list) = bp;
-        }
-    }else{
-        if(insert_ptr != NULL){
-            SUCP(bp) = NULL;
-            PREP(bp) = insert_ptr;
-            SUCP(insert_ptr) = bp;
-        }else{
-            SUCP(bp) = NULL;
-            PREP(bp) = NULL;
-            SEGP(segre_listp, list) = bp;
-        }
-    }
-    return;
+void put_free_block(void *bp){
+    SUCP(bp) = free_listp;
+    PREP(bp) = NULL;
+    PREP(free_listp) = bp;
+    free_listp = bp;
 }
 
 void remove_free_block(void *bp){
-    /*IMPLICIT & EXPLICIT*/
-    // if (bp == free_listp){
-    //     PREP(SUCP(bp)) = NULL;
-    //     free_listp = SUCP(bp);
-    // }else{
-    //     SUCP(PREP(bp)) = SUCP(bp);
-    //     PREP(SUCP(bp)) = PREP(bp);
-    // }
-
-    int list = 0;
-    size_t size = GET_SIZE(HDRP(bp));
-
-    while((list < LISTLIMIT -1) && (size > 1)){
-        size >>= 1;
-        list++;
-    }
-
-    if (SUCP(bp) != NULL){
-        if(PREP(bp) != NULL){
-            PREP(SUCP(bp)) = PREP(bp);
-            SUCP(PREP(bp)) = SUCP(bp);
-        }else{
-            PREP(SUCP(bp)) = NULL;
-            SEGP(segre_listp, list) = SUCP(bp);
-        }
+    if (bp == free_listp){
+        PREP(SUCP(bp)) = NULL;
+        free_listp = SUCP(bp);
     }else{
-        if(PREP(bp) != NULL){
-            SUCP(PREP(bp)) = NULL;
-        }else{
-            SEGP(segre_listp, list) = NULL;
-        }
+        SUCP(PREP(bp)) = SUCP(bp);
+        PREP(SUCP(bp)) = PREP(bp);
     }
-    return;
 }
 
 /*
@@ -334,51 +254,15 @@ void mm_free(void *ptr)
 {
     size_t size = GET_SIZE(HDRP(ptr));
 
-    /* IMPLICIT */
+    /* implicit_first_fit */
     // PUT(HDRP(ptr), PACK(size, 0));
     // PUT(FTRP(ptr), PACK(size, 0));
     // coalesce(ptr);
 
-    /* LIFO & SBA */
+    /* explicit_first_fit (LIFO)*/
     PUT(HDRP(ptr), PACK(size, 0));
     PUT(FTRP(ptr), PACK(size, 0));
     coalesce(ptr);
-}
-
-static void *coalesce(void *bp)
-{
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
-    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
-    size_t size = GET_SIZE(HDRP(bp));
-
-    // CASE 1: both prev and next are allocated
-    if(prev_alloc && next_alloc){
-        put_free_block(bp, size);
-        return bp;
-    }else if(prev_alloc && !next_alloc){
-        // CASE 2: prev is allocatd, next is freed
-        remove_free_block(NEXT_BLKP(bp));
-        size += GET_SIZE(HDRP(NEXT_BLKP(bp))); // new size = cur_block size + next_block size
-        PUT(HDRP(bp), PACK(size, 0)); // write new size to cur_block header
-        PUT(FTRP(bp), PACK(size, 0)); // copy it to the footer also.
-    }else if(!prev_alloc && next_alloc){
-        // CASE 3: prev is freed, next is allocated
-        remove_free_block(PREV_BLKP(bp));
-        size += GET_SIZE(HDRP(PREV_BLKP(bp))); // new size = cur_block size + prev_block size
-        PUT(FTRP(bp), PACK(size, 0)); // write new size to cur_block footer
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0)); // write new size to prev_block header
-        bp = PREV_BLKP(bp); //bp is changed
-    }else{
-        // CASE 4: both prev and next are freed
-        remove_free_block(PREV_BLKP(bp));
-        remove_free_block(NEXT_BLKP(bp));
-        size += GET_SIZE(HDRP(PREV_BLKP(bp))) + GET_SIZE(FTRP(NEXT_BLKP(bp))); // newsize = cur_block size + prev_block size + next_block size
-        PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0)); // write new_size to prev_block header
-        PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0)); //write new_size to next_block footer
-        bp = PREV_BLKP(bp); // bp is changed
-    }
-    put_free_block(bp, size);
-    return bp;
 }
 
 /*
